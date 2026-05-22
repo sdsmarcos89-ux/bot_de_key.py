@@ -1,8 +1,9 @@
 import discord
-import pyotp
 import os
-import threading
 import json
+import random
+import string
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
@@ -11,7 +12,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot 2FA Online")
+        self.wfile.write(b"Key Generator Bot Online")
 
 def run_health_check():
     port = int(os.environ.get("PORT", 10000))
@@ -24,127 +25,124 @@ threading.Thread(target=run_health_check, daemon=True).start()
 load_dotenv()
 token = os.getenv("DISCORD_BOT_TOKEN")
 
-CONFIG_FILE = "config_panel.json"
-CLIENT_ROLE_NAME = "Client" # Nome do cargo que terá acesso
+DATABASE_FILE = "keys_database.json"
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+def load_db():
+    if os.path.exists(DATABASE_FILE):
+        with open(DATABASE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {
-        "title": "🛡️ Rockstar Games e Autenticação de Dois Fatores (2FA)",
-        "description": "A segurança da sua conta Rockstar Games é primordial. A Autenticação de Dois Fatores (2FA) adiciona uma camada extra de proteção.",
-        "color": 0x5865F2,
-        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Rockstar_Games_Logo.svg/1200px-Rockstar_Games_Logo.svg.png",
-        "thumbnail_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Rockstar_Games_Logo.svg/1200px-Rockstar_Games_Logo.svg.png"
-    }
+    return {"keys": {}}
 
-def save_config(config):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4, ensure_ascii=False)
+def save_db(db):
+    with open(DATABASE_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=4, ensure_ascii=False)
 
-class SecretInputModal(discord.ui.Modal):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.add_item(discord.ui.InputText(
-            label="Sua Chave Secreta 2FA", 
-            placeholder="Cole sua chave secreta aqui...", 
-            style=discord.InputTextStyle.short
-        ))
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        secret = self.children[0].value
-        try:
-            totp = pyotp.TOTP(secret.replace(" ", "").upper())
-            code = totp.now()
-            config = load_config()
-            embed = discord.Embed(
-                title="🔑 Seu Código 2FA",
-                description=f"```\n{code}\n```\n\nEste código é válido por **30 segundos**. Gere um novo se expirar.",
-                color=config["color"]
-            )
-            embed.set_footer(text="Rockstar 2FA Bot")
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except pyotp.otp.OTPError:
-            await interaction.followup.send("❌ Chave Inválida! Verifique se a SECRET está correta.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Erro inesperado: {e}", ephemeral=True)
-
-class Generate2FAButton(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Gere 2fa code", 
-        style=discord.ButtonStyle.primary, 
-        custom_id="generate_2fa_button",
-        emoji="🔑"
-    )
-    async def button_callback(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # VERIFICAÇÃO DE CARGO: Verifica se o usuário tem o cargo "Client" ou é Admin
-        has_role = discord.utils.get(interaction.user.roles, name=CLIENT_ROLE_NAME)
-        is_admin = interaction.user.guild_permissions.administrator
-        
-        if not (has_role or is_admin):
-            return await interaction.response.send_message(
-                f"❌ Acesso Negado! Você precisa do cargo **{CLIENT_ROLE_NAME}** para gerar códigos 2FA.", 
-                ephemeral=True
-            )
-            
-        modal = SecretInputModal(title="Insira sua Chave Secreta 2FA")
-        await interaction.response.send_modal(modal)
+def generate_key(prefix="ZASKZ"):
+    # Gera uma key aleatória formato: ZASKZ-XXXX-XXXX-XXXX
+    chars = string.ascii_uppercase + string.digits
+    part1 = ''.join(random.choice(chars) for _ in range(4))
+    part2 = ''.join(random.choice(chars) for _ in range(4))
+    part3 = ''.join(random.choice(chars) for _ in range(4))
+    return f"{prefix}-{part1}-{part2}-{part3}"
 
 bot = discord.Bot()
 
-# --- COMANDOS DE ADMINISTRAÇÃO ---
-admin_group = bot.create_group("admin", "Comandos de administração do painel")
+# Grupo de comandos para Administradores
+admin = bot.create_group("key", "Gerenciamento de chaves de produto")
 
-@admin_group.command(name="set_visual", description="Configura o visual do painel 2FA")
-async def set_visual(
+@admin.command(name="gerar", description="Gera chaves aleatórias para um produto")
+async def gerar(
     ctx: discord.ApplicationContext,
-    titulo: discord.Option(str, "Novo título do painel", required=False),
-    descricao: discord.Option(str, "Nova descrição do painel", required=False),
-    cor_hex: discord.Option(str, "Cor em Hex (ex: 5865F2)", required=False),
-    imagem_url: discord.Option(str, "URL da imagem grande", required=False),
-    thumbnail_url: discord.Option(str, "URL da imagem pequena (thumbnail)", required=False)
+    produto: discord.Option(str, "Nome do produto"),
+    quantidade: discord.Option(int, "Quantidade de chaves", default=1),
+    prefixo: discord.Option(str, "Prefixo da key (ex: ZASKZ)", default="ZASKZ")
 ):
     if not ctx.author.guild_permissions.administrator:
-        return await ctx.respond("❌ Apenas administradores podem usar este comando.", ephemeral=True)
+        return await ctx.respond("❌ Apenas administradores podem gerar chaves.", ephemeral=True)
     
-    config = load_config()
-    if titulo: config["title"] = titulo
-    if descricao: config["description"] = descricao.replace("\\n", "\n")
-    if cor_hex:
-        try:
-            config["color"] = int(cor_hex.lstrip("#"), 16)
-        except ValueError:
-            return await ctx.respond("❌ Formato de cor inválido! Use Hexadecimal.", ephemeral=True)
-    if imagem_url: config["image_url"] = imagem_url
-    if thumbnail_url: config["thumbnail_url"] = thumbnail_url
+    db = load_db()
+    novas_keys = []
     
-    save_config(config)
-    await ctx.respond("✅ Configurações visuais atualizadas!", ephemeral=True)
+    for _ in range(quantidade):
+        key = generate_key(prefixo.upper())
+        while key in db["keys"]: # Evita duplicatas
+            key = generate_key(prefixo.upper())
+        
+        db["keys"][key] = {
+            "produto": produto,
+            "status": "disponivel",
+            "gerada_por": str(ctx.author),
+            "usada_por": None
+        }
+        novas_keys.append(key)
+    
+    save_db(db)
+    
+    keys_formatadas = "\n".join([f"`{k}`" for k in novas_keys])
+    embed = discord.Embed(
+        title="🆕 Novas Keys Geradas",
+        description=f"**Produto:** {produto}\n**Quantidade:** {quantidade}\n\n**Chaves:**\n{keys_formatadas}",
+        color=0x5865F2
+    )
+    await ctx.respond(embed=embed, ephemeral=True)
 
-@bot.slash_command(name="setup2fa", description="Configura o painel interativo de 2FA")
-async def setup2fa(ctx: discord.ApplicationContext):
+@admin.command(name="validar", description="Valida uma key enviada pelo cliente no ticket")
+async def validar(
+    ctx: discord.ApplicationContext,
+    key_do_cliente: discord.Option(str, "Cole a key que o cliente enviou")
+):
     if not ctx.author.guild_permissions.administrator:
-        return await ctx.respond("❌ Apenas administradores podem configurar o painel.", ephemeral=True)
+        return await ctx.respond("❌ Apenas administradores podem validar chaves.", ephemeral=True)
     
-    config = load_config()
-    embed = discord.Embed(title=config["title"], description=config["description"], color=config["color"])
-    if config.get("image_url"): embed.set_image(url=config["image_url"])
-    if config.get("thumbnail_url"): embed.set_thumbnail(url=config["thumbnail_url"])
-    embed.set_footer(text="Rockstar 2FA Bot | Segurança Máxima")
+    db = load_db()
+    key = key_do_cliente.upper().strip()
     
-    view = Generate2FAButton()
-    await ctx.respond("Painel configurado com sucesso!", ephemeral=True)
-    await ctx.channel.send(embed=embed, view=view)
+    if key not in db["keys"]:
+        return await ctx.respond(f"❌ **Key Inválida!** Esta chave não existe no sistema.", ephemeral=False)
+    
+    info = db["keys"][key]
+    
+    if info["status"] == "usada":
+        return await ctx.respond(f"⚠️ **Key Já Utilizada!**\nEsta chave foi usada por <@{info['usada_por']}> para o produto **{info['produto']}**.", ephemeral=False)
+    
+    # Se chegou aqui, a key é válida e está disponível
+    embed = discord.Embed(
+        title="✅ Key Válida!",
+        description=f"A chave `{key}` é legítima.\n\n**Produto:** {info['produto']}\n**Status:** Disponível para liberação.",
+        color=discord.Color.green()
+    )
+    
+    # Botão para "Queimar" a key (marcar como usada)
+    class ConfirmUse(discord.ui.View):
+        @discord.ui.button(label="Liberar Produto e Queimar Key", style=discord.ButtonStyle.danger)
+        async def confirm(self, button: discord.ui.Button, interaction: discord.Interaction):
+            info["status"] = "usada"
+            info["usada_por"] = str(ctx.author.id) # Registra quem validou no ticket
+            save_db(db)
+            await interaction.response.edit_message(content=f"✅ **Produto Liberado!** A key `{key}` foi marcada como usada e não pode mais ser validada.", embed=None, view=None)
+
+    await ctx.respond(embed=embed, view=ConfirmUse())
+
+@admin.command(name="estoque", description="Lista todas as chaves disponíveis")
+async def estoque(ctx: discord.ApplicationContext):
+    if not ctx.author.guild_permissions.administrator:
+        return await ctx.respond("❌ Acesso negado.", ephemeral=True)
+    
+    db = load_db()
+    disponiveis = [f"`{k}` | {v['produto']}" for k, v in db["keys"].items() if v["status"] == "disponivel"]
+    
+    if not disponiveis:
+        return await ctx.respond("📭 Não há chaves disponíveis no estoque.", ephemeral=True)
+    
+    lista = "\n".join(disponiveis)
+    if len(lista) > 2000: lista = lista[:1900] + "\n... (lista muito longa)"
+    
+    embed = discord.Embed(title="📦 Estoque de Keys Disponíveis", description=lista, color=0x5865F2)
+    await ctx.respond(embed=embed, ephemeral=True)
 
 @bot.event
 async def on_ready():
-    bot.add_view(Generate2FAButton())
-    print(f"✅ Bot 2FA Online como {bot.user}")
+    print(f"✅ Key Generator para Tickets Online: {bot.user}")
 
 if token:
     bot.run(token)
