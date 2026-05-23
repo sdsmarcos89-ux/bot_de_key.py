@@ -1,27 +1,44 @@
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
+from flask import Flask
+from threading import Thread
+import os
 
 # ==========================================
-# CONFIGURAÇÕES DO BOT
+# SERVIDOR WEB PARA O RENDER (KEEP ALIVE)
+# ==========================================
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot está online!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# ==========================================
+# CONFIGURAÇÕES DO BOT (SUBSTITUA AQUI)
 # ==========================================
 
-# Token do seu bot Discord (Recomendado resetar após o uso)
-TOKEN = "MTUwNzIzOTMwMTE1Nzc1MjkyMg.GrB2Zq.w2urPvVNgPgdqYqSOaIztSeApnyPdLoAkm92uk"
+# 1. PEGUE UM NOVO TOKEN NO DISCORD DEVELOPER PORTAL (O ANTERIOR FOI DESATIVADO)
+TOKEN = "COLOQUE_O_NOVO_TOKEN_AQUI"
 
-# ID do seu servidor (Guild ID)
+# 2. ID DO SEU SERVIDOR
 GUILD_ID = 1499640893806870639
 
-# ID do cargo @Heulper
+# 3. ID DO CARGO @Heulper
 HELPER_ROLE_ID = 1499649343374753902
 
-# ID da CATEGORIA onde os tickets são abertos (IMPORTANTE: Você deve preencher este ID)
-# Para pegar o ID, clique com o botão direito na categoria de tickets e "Copiar ID"
-TICKET_CATEGORY_ID = 0  # <--- COLOQUE O ID DA CATEGORIA AQUI
+# 4. ID DA CATEGORIA DE TICKETS
+TICKET_CATEGORY_ID = 0  # <--- VOCÊ AINDA PRECISA COLOCAR ESTE ID
 
 # ==========================================
 
-# Intents necessários para o bot
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -32,22 +49,17 @@ bot = commands.Bot(command_prefix="", intents=intents)
 @bot.event
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
-    print("------")
 
 @bot.event
 async def on_guild_channel_create(channel):
-    # Verifica se o canal criado está na categoria de tickets correta
     if isinstance(channel, discord.TextChannel) and channel.category_id == TICKET_CATEGORY_ID:
         
-        # Criação dos botões
         button_wait = Button(label="Aguardar Suporte", style=discord.ButtonStyle.primary)
         button_helper = Button(label="Chamar Helper", style=discord.ButtonStyle.success)
 
-        # Ação: Aguardar Suporte
         async def wait_callback(interaction: discord.Interaction):
-            await interaction.response.send_message("Entendido! Por favor, aguarde um momento.", ephemeral=True)
+            await interaction.response.send_message("Entendido! Por favor, aguarde.", ephemeral=True)
 
-        # Ação: Chamar Helper
         async def helper_callback(interaction: discord.Interaction):
             guild = bot.get_guild(GUILD_ID)
             if guild:
@@ -55,7 +67,7 @@ async def on_guild_channel_create(channel):
                 if helper_role:
                     await interaction.response.send_message(f"O cargo {helper_role.mention} foi notificado!")
                 else:
-                    await interaction.response.send_message("Cargo @Heulper não encontrado.", ephemeral=True)
+                    await interaction.response.send_message("Cargo não encontrado.", ephemeral=True)
 
         button_wait.callback = wait_callback
         button_helper.callback = helper_callback
@@ -64,15 +76,11 @@ async def on_guild_channel_create(channel):
         view.add_item(button_wait)
         view.add_item(button_helper)
 
-        # Mensagem automática ao abrir o ticket
         await channel.send(
-            "Olá! Bem-vindo ao seu ticket.\n\n"
-            "Como podemos ajudar? Escolha uma opção abaixo:",
+            "Olá! Bem-vindo ao seu ticket.\nComo podemos ajudar?",
             view=view
         )
 
-# Inicia o bot
-if TOKEN == "" or TOKEN.startswith("MTU"): # Verificação simples do token
+if __name__ == "__main__":
+    keep_alive() # Inicia o servidor web para o Render não dar erro de porta
     bot.run(TOKEN)
-else:
-    print("Erro: Verifique o Token no código.")
